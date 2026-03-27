@@ -1,0 +1,1130 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>KML / KMZ Polygon Viewer</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css"/>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@300;400;600&display=swap');
+
+  :root {
+    --bg: #0d0f14;
+    --surface: #151820;
+    --border: #252a38;
+    --accent: #00e5a0;
+    --accent2: #0099ff;
+    --text: #e2e8f0;
+    --muted: #64748b;
+    --row-hover: #1a1f2e;
+    --selected: #ff3b3b18;
+    --selected-border: #ff3b3b;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: 'IBM Plex Sans', sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    height: 100vh;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* ── HEADER ── */
+  header {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 14px 24px;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
+    flex-shrink: 0;
+  }
+  header h1 {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 15px;
+    font-weight: 600;
+    letter-spacing: .04em;
+    color: var(--accent);
+  }
+  header h1 span { color: var(--muted); font-weight: 400; }
+  .badge {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 11px;
+    background: var(--accent)22;
+    color: var(--accent);
+    border: 1px solid var(--accent)55;
+    border-radius: 4px;
+    padding: 2px 8px;
+  }
+  .header-actions { margin-left: auto; display: flex; gap: 10px; align-items: center; }
+
+  /* ── DROP ZONE ── */
+  #drop-zone {
+    position: absolute; inset: 0;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    background: var(--bg);
+    z-index: 1000;
+    gap: 20px;
+    transition: background .2s;
+  }
+  #drop-zone.drag-over { background: #00e5a008; }
+  #drop-zone.hidden { display: none; }
+
+  .drop-icon {
+    width: 80px; height: 80px;
+    border: 2px dashed var(--accent)66;
+    border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 32px;
+    animation: pulse 2.5s ease-in-out infinite;
+  }
+  @keyframes pulse {
+    0%,100% { border-color: var(--accent)44; transform: scale(1); }
+    50%      { border-color: var(--accent)cc; transform: scale(1.04); }
+  }
+  .drop-title {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 22px; font-weight: 600;
+    color: var(--text);
+    letter-spacing: -.01em;
+  }
+  .drop-sub { color: var(--muted); font-size: 14px; }
+  .drop-sub strong { color: var(--accent); }
+
+  .btn-upload {
+    background: var(--accent);
+    color: #000;
+    border: none;
+    padding: 10px 28px;
+    border-radius: 6px;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: opacity .15s, transform .15s;
+  }
+  .btn-upload:hover { opacity: .85; transform: translateY(-1px); }
+
+  /* ── MAIN LAYOUT ── */
+  #app {
+    display: flex;
+    flex: 1;
+    overflow: hidden;
+  }
+  #app.hidden { display: none; }
+
+  /* ── LEFT PANEL ── */
+  #panel {
+    width: 420px;
+    min-width: 300px;
+    max-width: 50%;
+    display: flex;
+    flex-direction: column;
+    border-right: 1px solid var(--border);
+    background: var(--surface);
+    flex-shrink: 0;
+  }
+
+  .panel-head {
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-shrink: 0;
+  }
+  .panel-head input[type=search] {
+    flex: 1;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 7px 12px;
+    border-radius: 5px;
+    font-family: 'IBM Plex Sans', sans-serif;
+    font-size: 13px;
+    outline: none;
+    transition: border-color .15s;
+  }
+  .panel-head input[type=search]:focus { border-color: var(--accent)88; }
+  .count-badge {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 11px;
+    color: var(--muted);
+    white-space: nowrap;
+  }
+
+  /* ── TABLE ── */
+  #table-wrap {
+    flex: 1;
+    overflow-y: auto;
+    overflow-x: hidden;
+  }
+  #table-wrap::-webkit-scrollbar { width: 5px; }
+  #table-wrap::-webkit-scrollbar-track { background: transparent; }
+  #table-wrap::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+  /* ── DETAIL PANEL (GeoJSON al seleccionar fila) ── */
+  #detail-panel {
+    flex-shrink: 0;
+    border-top: 1px solid var(--border);
+    background: #0f1218;
+    display: flex;
+    flex-direction: column;
+    max-height: 42vh;
+    min-height: 0;
+  }
+  #detail-panel.empty {
+    padding: 12px 16px;
+    color: var(--muted);
+    font-size: 12px;
+  }
+  #detail-panel.empty .detail-head,
+  #detail-panel.empty #detail-pre-wrap { display: none; }
+  #detail-panel:not(.empty) .detail-placeholder { display: none; }
+  .detail-head {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--border)88;
+    flex-shrink: 0;
+  }
+  .detail-title {
+    flex: 1;
+    min-width: 0;
+    font-family: 'IBM Plex Sans', sans-serif;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  #detail-pre-wrap {
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+    margin: 0;
+    padding: 12px 14px;
+  }
+  #detail-pre-wrap::-webkit-scrollbar { width: 5px; height: 5px; }
+  #detail-pre-wrap::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+  #detail-json {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 11px;
+    line-height: 1.55;
+    color: #94a3b8;
+    white-space: pre;
+    word-break: normal;
+    margin: 0;
+  }
+  .detail-actions {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+  }
+  .detail-actions .copy-btn { margin-top: 0; }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+  }
+  thead {
+    position: sticky; top: 0;
+    background: var(--surface);
+    z-index: 10;
+  }
+  th {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+    color: var(--muted);
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--border);
+    text-align: left;
+  }
+  td {
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--border)88;
+    vertical-align: top;
+  }
+  tr { cursor: pointer; transition: background .1s; }
+  tr:hover td { background: var(--row-hover); }
+  tr.selected td {
+    background: var(--selected);
+    border-bottom-color: var(--selected-border)33;
+  }
+  tr.selected td:first-child {
+    border-left: 3px solid var(--selected-border);
+    padding-left: 11px;
+  }
+
+  .poly-name { font-weight: 600; color: var(--text); }
+  .poly-pts {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 11px;
+    color: var(--accent2);
+  }
+  .poly-coords {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 10px;
+    color: var(--muted);
+    word-break: break-all;
+    max-height: 38px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+  }
+
+  /* ── MAP ── */
+  #map {
+    flex: 1;
+    min-width: 0;
+  }
+
+  /* Leaflet dark override */
+  .leaflet-container { background: #0a0c10 !important; }
+
+  /* ── COPY BUTTON (inside table row) ── */
+  .copy-btn {
+    display: inline-block;
+    margin-top: 4px;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 10px;
+    color: var(--accent);
+    background: var(--accent)11;
+    border: 1px solid var(--accent)33;
+    border-radius: 3px;
+    padding: 1px 7px;
+    cursor: pointer;
+    transition: background .15s;
+  }
+  .copy-btn:hover { background: var(--accent)22; }
+
+  /* ── EXPORT BUTTONS ── */
+  .btn-export {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 6px 14px;
+    border-radius: 5px;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 11px;
+    cursor: pointer;
+    transition: border-color .15s, color .15s;
+  }
+  .btn-export:hover { border-color: var(--accent)88; color: var(--accent); }
+
+  .btn-load {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--muted);
+    padding: 6px 14px;
+    border-radius: 5px;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 11px;
+    cursor: pointer;
+    transition: all .15s;
+  }
+  .btn-load:hover { border-color: var(--accent2)88; color: var(--accent2); }
+
+  /* ── TOOLTIP on map ── */
+  .leaflet-tooltip {
+    background: var(--surface) !important;
+    border: 1px solid var(--border) !important;
+    color: var(--text) !important;
+    font-family: 'IBM Plex Sans', sans-serif !important;
+    font-size: 12px !important;
+    border-radius: 4px !important;
+    box-shadow: 0 4px 12px #00000066 !important;
+    padding: 5px 10px !important;
+  }
+  .leaflet-tooltip::before { display: none !important; }
+
+  #file-input { display: none; }
+
+  /* ── TABS ── */
+  .tabs {
+    display: flex;
+    gap: 2px;
+    padding: 0 24px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+  .tab {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 12px;
+    padding: 9px 18px;
+    cursor: pointer;
+    color: var(--muted);
+    border-bottom: 2px solid transparent;
+    transition: color .15s, border-color .15s;
+    user-select: none;
+  }
+  .tab:hover { color: var(--text); }
+  .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+  /* ── SQL VIEW ── */
+  #sql-view {
+    flex: 1;
+    display: none;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  #sql-view.active { display: flex; }
+
+  #map-view {
+    flex: 1;
+    display: flex;
+    overflow: hidden;
+  }
+  #map-view.hidden { display: none; }
+
+  .sql-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 20px;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
+    flex-shrink: 0;
+    flex-wrap: wrap;
+  }
+  .sql-toolbar label {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 11px;
+    color: var(--muted);
+    white-space: nowrap;
+  }
+  .sql-toolbar input[type=text] {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 6px 10px;
+    border-radius: 4px;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 12px;
+    outline: none;
+    width: 160px;
+    transition: border-color .15s;
+  }
+  .sql-toolbar input[type=text]:focus { border-color: var(--accent)88; }
+  .sql-info {
+    margin-left: auto;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 11px;
+    color: var(--muted);
+  }
+  .sql-info strong { color: var(--accent); }
+
+  /* SQL code area */
+  #sql-wrap {
+    flex: 1;
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding: 0;
+  }
+  #sql-wrap::-webkit-scrollbar { width: 5px; }
+  #sql-wrap::-webkit-scrollbar-track { background: transparent; }
+  #sql-wrap::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+  .sql-block {
+    display: flex;
+    align-items: stretch;
+    border-bottom: 1px solid var(--border)55;
+    transition: background .1s;
+  }
+  .sql-block:hover { background: var(--row-hover); }
+  .sql-block.no-match { opacity: .38; }
+  .sql-block.no-match:hover { background: transparent; }
+
+  .sql-num {
+    width: 44px;
+    flex-shrink: 0;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 11px;
+    color: var(--muted);
+    padding: 12px 0 12px 14px;
+    user-select: none;
+    border-right: 1px solid var(--border)55;
+  }
+  .sql-code {
+    flex: 1;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 11.5px;
+    line-height: 1.6;
+    color: #94a3b8;
+    padding: 12px 16px;
+    white-space: pre-wrap;
+    word-break: break-all;
+    min-width: 0;
+  }
+  /* syntax highlight classes */
+  .kw  { color: #7dd3fc; }   /* UPDATE, SET, WHERE */
+  .tbl { color: #a78bfa; }   /* table name */
+  .fn  { color: #34d399; }   /* ST_GeomFromText, ST_SetSRID */
+  .str { color: #fbbf24; }   /* strings */
+  .cmt { color: #475569; font-style: italic; }  /* -- comments */
+  .nm  { color: var(--accent); }  /* matched name fragment */
+
+  .sql-copy-row {
+    display: flex;
+    align-items: center;
+    padding: 6px 14px 6px 0;
+    flex-shrink: 0;
+  }
+  .sql-copy-row .copy-btn { margin: 0; }
+
+  /* status pill */
+  .match-pill {
+    display: inline-block;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 10px;
+    padding: 1px 7px;
+    border-radius: 3px;
+    margin-right: 4px;
+  }
+  .match-ok  { background: #00e5a020; color: var(--accent); border: 1px solid var(--accent)44; }
+  .match-no  { background: #ff6b6b18; color: #ff6b6b;       border: 1px solid #ff6b6b44; }
+
+  .sql-footer {
+    padding: 10px 20px;
+    border-top: 1px solid var(--border);
+    background: var(--surface);
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-shrink: 0;
+  }
+  .stat { font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: var(--muted); }
+  .stat strong { color: var(--text); }
+  .stat.ok strong { color: var(--accent); }
+  .stat.warn strong { color: #fbbf24; }
+
+  /* resize handle */
+  #resize-handle {
+    width: 4px;
+    background: var(--border);
+    cursor: col-resize;
+    transition: background .15s;
+    flex-shrink: 0;
+  }
+  #resize-handle:hover { background: var(--accent)66; }
+</style>
+</head>
+<body>
+
+<!-- DROP ZONE (solo visible mientras carga o si falla la carga automática) -->
+<div id="drop-zone">
+  <div class="drop-icon">📐</div>
+  <div class="drop-title">KML / KMZ Polygon Viewer</div>
+  <div class="drop-sub" id="drop-sub-main">Preparando vista…</div>
+  <button class="btn-upload" id="btn-upload" onclick="document.getElementById('file-input').click()" style="display:none">
+    Seleccionar archivo
+  </button>
+  <div class="drop-sub" id="drop-sub-hint" style="font-size:12px;display:none">Extrae nombres y coordenadas de todos los polígonos</div>
+</div>
+
+<input type="file" id="file-input" accept=".kml,.kmz">
+
+<!-- HEADER -->
+<header>
+  <h1>KML<span>/</span>KMZ <span>Polygon Viewer</span></h1>
+  <span class="badge" id="hdr-count" style="display:none">0 polígonos</span>
+  <div class="header-actions">
+    <button class="btn-load" onclick="document.getElementById('file-input').click()">↑ Cargar otro archivo</button>
+    <button class="btn-export" id="btn-csv"  style="display:none" onclick="exportCSV()">⬇ CSV</button>
+    <button class="btn-export" id="btn-json" style="display:none" onclick="exportJSON()">⬇ GeoJSON</button>
+    <button class="btn-export" id="btn-sql"  style="display:none" onclick="switchTab('sql')">🗄 Ver SQL</button>
+  </div>
+</header>
+
+<!-- TABS (shown after load) -->
+<div class="tabs" id="tabs" style="display:none">
+  <div class="tab active" data-tab="map" onclick="switchTab('map')">🗺 Mapa</div>
+  <div class="tab"        data-tab="sql" onclick="switchTab('sql')">🗄 SQL Export</div>
+</div>
+
+<!-- MAIN APP -->
+<div id="app" class="hidden">
+
+  <!-- MAP VIEW -->
+  <div id="map-view">
+  <div id="panel">
+    <div class="panel-head">
+      <input type="search" id="search-box" placeholder="Buscar polígono…" oninput="filterTable()">
+      <span class="count-badge" id="count-label">0 resultados</span>
+    </div>
+    <div id="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>Nombre</th>
+            <th>Puntos</th>
+            <th>Coordenadas</th>
+          </tr>
+        </thead>
+        <tbody id="tbody"></tbody>
+      </table>
+    </div>
+    <div id="detail-panel" class="empty">
+      <div class="detail-placeholder">Hacé clic en un polígono de la lista para ver su GeoJSON.</div>
+      <div class="detail-head">
+        <span class="detail-title" id="detail-title"></span>
+        <div class="detail-actions">
+          <span class="copy-btn" id="detail-copy-btn" title="Copiar objeto Polygon">⎘ copiar GeoJSON</span>
+        </div>
+      </div>
+      <pre id="detail-pre-wrap"><code id="detail-json"></code></pre>
+    </div>
+  </div>
+  <div id="resize-handle"></div>
+  <div id="map"></div>
+  </div><!-- /map-view -->
+
+  <!-- SQL VIEW -->
+  <div id="sql-view">
+    <div class="sql-toolbar">
+      <label>Tabla:</label>
+      <input type="text" id="cfg-table" value="parques" oninput="rebuildSQL()">
+      <label>Columna geometría:</label>
+      <input type="text" id="cfg-geom"  value="geometry" oninput="rebuildSQL()">
+      <label>Columna nombre:</label>
+      <input type="text" id="cfg-name"  value="name"     oninput="rebuildSQL()">
+      <div class="sql-info">
+        Geometría en <strong>GeoJSON</strong> — match con <strong>ILIKE</strong> substring
+      </div>
+      <button class="btn-export" onclick="downloadSQL()">⬇ Descargar .sql</button>
+    </div>
+    <div id="sql-wrap"></div>
+    <div class="sql-footer" id="sql-footer"></div>
+  </div><!-- /sql-view -->
+
+</div><!-- /app -->
+
+<script>
+// ─────────────────────────────────────
+//  GLOBALS
+// ─────────────────────────────────────
+let allPolygons = [];
+let filtered    = [];
+let map, layerGroup;
+let selectedIdx = null;
+const colors    = ['#00e5a0','#0099ff','#ff6b6b','#ffd93d','#a78bfa','#fb923c','#34d399','#f472b6'];
+
+/** KML en la misma carpeta que este HTML (editá el nombre si cambia el archivo). */
+const DEFAULT_KML_FILE = 'Proyectos compartido.kmz (4).kml';
+
+// ─────────────────────────────────────
+//  MAP INIT
+// ─────────────────────────────────────
+function initMap() {
+  if (map) return;
+  map = L.map('map', { zoomControl: true, attributionControl: false });
+  L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+    maxZoom: 20,
+    attribution: '© CartoDB'
+  }).addTo(map);
+  layerGroup = L.layerGroup().addTo(map);
+}
+
+// ─────────────────────────────────────
+//  FILE READING
+// ─────────────────────────────────────
+document.getElementById('file-input').addEventListener('change', e => {
+  const file = e.target.files[0];
+  if (!file) return;
+  e.target.value = '';
+  readFile(file);
+});
+
+const dz = document.getElementById('drop-zone');
+dz.addEventListener('dragover', e => { e.preventDefault(); dz.classList.add('drag-over'); });
+dz.addEventListener('dragleave', () => dz.classList.remove('drag-over'));
+dz.addEventListener('drop', e => {
+  e.preventDefault(); dz.classList.remove('drag-over');
+  const file = e.dataTransfer.files[0];
+  if (file) readFile(file);
+});
+
+async function readFile(file) {
+  const name = file.name.toLowerCase();
+  let kmlText;
+  if (name.endsWith('.kmz')) {
+    // KMZ is a ZIP — use JSZip
+    await loadJSZip();
+    const zip = await JSZip.loadAsync(file);
+    const kmlFile = Object.keys(zip.files).find(f => f.endsWith('.kml'));
+    if (!kmlFile) { alert('No se encontró archivo .kml dentro del .kmz'); return; }
+    kmlText = await zip.files[kmlFile].async('string');
+  } else {
+    kmlText = await file.text();
+  }
+  parseKML(kmlText);
+}
+
+async function loadDefaultKmlFromSameFolder() {
+  const dz = document.getElementById('drop-zone');
+  const titleEl = dz.querySelector('.drop-title');
+  const mainSub = document.getElementById('drop-sub-main');
+  const hintSub = document.getElementById('drop-sub-hint');
+  const btnUp = document.getElementById('btn-upload');
+
+  titleEl.textContent = 'Cargando KML…';
+  mainSub.textContent = DEFAULT_KML_FILE;
+  hintSub.style.display = 'none';
+  btnUp.style.display = 'none';
+
+  const url = new URL(DEFAULT_KML_FILE, window.location.href).href;
+  const lower = DEFAULT_KML_FILE.toLowerCase();
+
+  try {
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+
+    let kmlText;
+    if (lower.endsWith('.kmz')) {
+      await loadJSZip();
+      const buf = await res.arrayBuffer();
+      const zip = await JSZip.loadAsync(buf);
+      const kmlEntry = Object.keys(zip.files).find(f => f.endsWith('.kml'));
+      if (!kmlEntry) { alert('No se encontró .kml dentro del .kmz'); return; }
+      kmlText = await zip.files[kmlEntry].async('string');
+    } else {
+      kmlText = await res.text();
+    }
+    parseKML(kmlText);
+  } catch (e) {
+    console.warn('Carga automática del KML:', e);
+    const thisPage = (window.location.pathname.split('/').pop() || 'index.html');
+    const sampleUrl = 'http://localhost:8765/' + encodeURI(thisPage);
+    titleEl.textContent = 'No se pudo abrir el KML automático';
+    mainSub.innerHTML =
+      'Si abriste el HTML con <strong>file://</strong>, el navegador bloquea leer otros archivos de la carpeta. ' +
+      'Desde esta carpeta en la terminal: <code style="color:var(--accent);font-size:12px">python3 -m http.server 8765</code> ' +
+      'y entrá a <code style="color:var(--accent);font-size:12px">' + escHtml(sampleUrl) + '</code>.';
+    hintSub.style.display = '';
+    hintSub.innerHTML = 'O arrastrá / seleccioná un <strong>.kml</strong> o <strong>.kmz</strong>.';
+    btnUp.style.display = '';
+  }
+}
+
+function loadJSZip() {
+  return new Promise((res, rej) => {
+    if (window.JSZip) return res();
+    const s = document.createElement('script');
+    s.src = 'https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js';
+    s.onload = res; s.onerror = rej;
+    document.head.appendChild(s);
+  });
+}
+
+// ─────────────────────────────────────
+//  KML PARSER
+// ─────────────────────────────────────
+function parseKML(text) {
+  const parser = new DOMParser();
+  const doc    = parser.parseFromString(text, 'text/xml');
+
+  const NS = 'http://www.opengis.net/kml/2.2';
+  const placemarks = doc.getElementsByTagNameNS(NS, 'Placemark');
+  const polys = [];
+
+  Array.from(placemarks).forEach((pm, globalIdx) => {
+    const nameEl  = pm.getElementsByTagNameNS(NS, 'name')[0];
+    const polyEls = pm.getElementsByTagNameNS(NS, 'Polygon');
+    if (!polyEls.length) return;
+
+    const name = nameEl ? nameEl.textContent.trim() : `Polígono ${globalIdx}`;
+
+    Array.from(polyEls).forEach(polyEl => {
+      // prefer outerBoundaryIs coordinates
+      const outerEl  = polyEl.getElementsByTagNameNS(NS, 'outerBoundaryIs')[0];
+      const coordsEl = outerEl
+        ? outerEl.getElementsByTagNameNS(NS, 'coordinates')[0]
+        : polyEl.getElementsByTagNameNS(NS, 'coordinates')[0];
+      if (!coordsEl) return;
+
+      const raw    = coordsEl.textContent.trim();
+      const points = raw.split(/\s+/).map(pt => {
+        const [lng, lat, alt] = pt.split(',').map(Number);
+        return [lat, lng];
+      }).filter(p => !isNaN(p[0]) && !isNaN(p[1]));
+
+      if (points.length < 3) return;
+
+      polys.push({
+        name,
+        points,
+        rawCoords: raw
+      });
+    });
+  });
+
+  if (!polys.length) { alert('No se encontraron polígonos en el archivo.'); return; }
+
+  allPolygons = polys;
+  filtered    = [...polys];
+  selectedIdx = null;
+  updateDetailPanel(null);
+
+  // show UI
+  document.getElementById('drop-zone').classList.add('hidden');
+  document.getElementById('app').classList.remove('hidden');
+  document.getElementById('tabs').style.display = '';
+  document.getElementById('hdr-count').style.display = '';
+  document.getElementById('btn-csv').style.display   = '';
+  document.getElementById('btn-json').style.display  = '';
+  document.getElementById('btn-sql').style.display   = '';
+
+  initMap();
+  renderTable();
+  renderMap(true);
+}
+
+// ─────────────────────────────────────
+//  TABLE
+// ─────────────────────────────────────
+function renderTable() {
+  const tbody = document.getElementById('tbody');
+  tbody.innerHTML = '';
+  document.getElementById('count-label').textContent = `${filtered.length} resultados`;
+  document.getElementById('hdr-count').textContent   = `${allPolygons.length} polígonos`;
+
+  filtered.forEach((poly, i) => {
+    const globalIdx = allPolygons.indexOf(poly);
+    const tr = document.createElement('tr');
+    if (globalIdx === selectedIdx) tr.classList.add('selected');
+
+    const preview = poly.points.slice(0,3)
+      .map(p => `${p[0].toFixed(5)},${p[1].toFixed(5)}`).join(' | ') + '…';
+
+    tr.innerHTML = `
+      <td style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--muted)">${globalIdx+1}</td>
+      <td>
+        <div class="poly-name">${escHtml(poly.name)}</div>
+        <span class="copy-btn" data-idx="${globalIdx}" title="Copiar coordenadas GeoJSON">⎘ copiar coords</span>
+      </td>
+      <td><span class="poly-pts">${poly.points.length}</span></td>
+      <td><div class="poly-coords">${preview}</div></td>
+    `;
+
+    tr.addEventListener('click', (e) => {
+      if (e.target.classList.contains('copy-btn')) return;
+      selectPolygon(globalIdx);
+    });
+
+    tr.querySelector('.copy-btn').addEventListener('click', (e) => {
+      e.stopPropagation();
+      copyCoords(globalIdx, e.target);
+    });
+
+    tbody.appendChild(tr);
+  });
+}
+
+function filterTable() {
+  const q = document.getElementById('search-box').value.toLowerCase();
+  filtered = allPolygons.filter(p => p.name.toLowerCase().includes(q));
+  renderTable();
+}
+
+// ─────────────────────────────────────
+//  MAP RENDERING
+// ─────────────────────────────────────
+/** @param {boolean} fitAll si true, ajusta el zoom a todos los polígonos (solo al cargar). */
+function renderMap(fitAll = false) {
+  layerGroup.clearLayers();
+  const bounds = [];
+
+  allPolygons.forEach((poly, i) => {
+    const color   = colors[i % colors.length];
+    const isSelected = i === selectedIdx;
+
+    const layer = L.polygon(poly.points, {
+      color:       isSelected ? '#ff3b3b' : '#00e5a0',
+      weight:      isSelected ? 3.5 : 1.5,
+      opacity:     isSelected ? 1   : .75,
+      fillColor:   isSelected ? '#ff3b3b' : '#00e5a0',
+      fillOpacity: isSelected ? .5  : .15,
+    });
+
+    layer.bindTooltip(poly.name, { sticky: true, direction: 'top' });
+    layer.on('click', () => selectPolygon(i));
+    layer.addTo(layerGroup);
+    bounds.push(...poly.points);
+  });
+
+  if (fitAll && bounds.length) {
+    map.fitBounds(L.latLngBounds(bounds), { padding: [30, 30] });
+  }
+}
+
+function polygonGeoJSONObject(points) {
+  const ring = points.map(([lat, lng]) => [lng, lat]);
+  const first = ring[0], last = ring[ring.length - 1];
+  if (first[0] !== last[0] || first[1] !== last[1]) ring.push([...first]);
+  return { type: 'Polygon', coordinates: [ring] };
+}
+
+function updateDetailPanel(idx) {
+  const panel = document.getElementById('detail-panel');
+  const titleEl = document.getElementById('detail-title');
+  const jsonEl = document.getElementById('detail-json');
+
+  if (idx == null || !allPolygons[idx]) {
+    panel.classList.add('empty');
+    titleEl.textContent = '';
+    jsonEl.textContent = '';
+    return;
+  }
+
+  panel.classList.remove('empty');
+  const poly = allPolygons[idx];
+  titleEl.textContent = poly.name;
+
+  const obj = polygonGeoJSONObject(poly.points);
+  jsonEl.textContent = JSON.stringify(obj, null, 2);
+}
+
+document.getElementById('detail-copy-btn').addEventListener('click', (e) => {
+  e.stopPropagation();
+  if (selectedIdx == null || !allPolygons[selectedIdx]) return;
+  const btn = e.currentTarget;
+  const text = JSON.stringify(polygonGeoJSONObject(allPolygons[selectedIdx].points), null, 2);
+  navigator.clipboard.writeText(text).then(() => {
+    const orig = btn.textContent;
+    btn.textContent = '✓ copiado';
+    btn.style.color = '#00e5a0';
+    setTimeout(() => { btn.textContent = orig; btn.style.color = ''; }, 1500);
+  });
+});
+
+function selectPolygon(idx) {
+  selectedIdx = idx;
+  updateDetailPanel(idx);
+  renderMap();
+  renderTable();
+
+  // scroll table row into view
+  const rows = document.querySelectorAll('#tbody tr');
+  const filteredIdx = filtered.indexOf(allPolygons[idx]);
+  if (filteredIdx >= 0 && rows[filteredIdx]) {
+    rows[filteredIdx].scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  }
+}
+
+// ─────────────────────────────────────
+//  COPY COORDS (Leaflet-ready array)
+// ─────────────────────────────────────
+function copyCoords(idx, btn) {
+  const poly   = allPolygons[idx];
+  const latlngs = poly.points.map(([lat, lng]) => [lat, lng]);
+  const text   = JSON.stringify(latlngs);
+  navigator.clipboard.writeText(text).then(() => {
+    const orig = btn.textContent;
+    btn.textContent = '✓ copiado';
+    btn.style.color = '#00e5a0';
+    setTimeout(() => { btn.textContent = orig; btn.style.color = ''; }, 1500);
+  });
+}
+
+// ─────────────────────────────────────
+//  EXPORTS
+// ─────────────────────────────────────
+function exportCSV() {
+  const rows = [['#','Nombre','Puntos','Coordenadas (lat lng lat lng ...)']];
+  allPolygons.forEach((p, i) => {
+    const flatCoords = p.points.map(([lat,lng]) => `${lat} ${lng}`).join('; ');
+    rows.push([i+1, p.name, p.points.length, flatCoords]);
+  });
+  const csv = rows.map(r => r.map(v => `"${String(v).replace(/"/g,'""')}"`).join(',')).join('\n');
+  download('poligonos.csv', 'text/csv', csv);
+}
+
+function exportJSON() {
+  const gj = {
+    type: 'FeatureCollection',
+    features: allPolygons.map((p, i) => ({
+      type: 'Feature',
+      properties: { id: i+1, name: p.name, points: p.points.length },
+      geometry: {
+        type: 'Polygon',
+        coordinates: [p.points.map(([lat,lng]) => [lng, lat])]
+      }
+    }))
+  };
+  download('poligonos.geojson', 'application/json', JSON.stringify(gj, null, 2));
+}
+
+function download(name, mime, content) {
+  const a  = document.createElement('a');
+  a.href   = URL.createObjectURL(new Blob([content], { type: mime }));
+  a.download = name;
+  a.click();
+}
+
+// ─────────────────────────────────────
+//  RESIZE PANEL
+// ─────────────────────────────────────
+const handle = document.getElementById('resize-handle');
+let dragging = false, startX, startW;
+handle.addEventListener('mousedown', e => {
+  dragging = true; startX = e.clientX;
+  startW   = document.getElementById('panel').offsetWidth;
+  document.body.style.cursor = 'col-resize';
+  document.body.style.userSelect = 'none';
+});
+document.addEventListener('mousemove', e => {
+  if (!dragging) return;
+  const panel = document.getElementById('panel');
+  panel.style.width = Math.min(Math.max(startW + e.clientX - startX, 250), window.innerWidth*.7) + 'px';
+  if (map) map.invalidateSize();
+});
+document.addEventListener('mouseup', () => { dragging = false; document.body.style.cursor=''; document.body.style.userSelect=''; });
+
+// ─────────────────────────────────────
+//  TAB SWITCHER
+// ─────────────────────────────────────
+function switchTab(tab) {
+  document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab === tab));
+  document.getElementById('map-view').classList.toggle('hidden', tab !== 'map');
+  document.getElementById('sql-view').classList.toggle('active', tab === 'sql');
+  if (tab === 'sql') rebuildSQL();
+  if (tab === 'map' && map) setTimeout(() => map.invalidateSize(), 50);
+}
+
+// ─────────────────────────────────────
+//  SQL BUILDER  (PostGIS / Supabase)
+// ─────────────────────────────────────
+function polyToGeoJSON(points) {
+  // GeoJSON: [lng, lat] — must close ring (first == last)
+  const ring = points.map(([lat, lng]) => [lng, lat]);
+  const first = ring[0], last = ring[ring.length - 1];
+  if (first[0] !== last[0] || first[1] !== last[1]) ring.push(first);
+  return JSON.stringify({ type: 'Polygon', coordinates: [ring] });
+}
+
+function buildStmt(tbl, geom, nCol, poly) {
+  const nameEsc = poly.name.replace(/'/g, "''");
+  // Build ring as [lng, lat] and close it
+  const ring = poly.points.map(([lat, lng]) => [lng, lat]);
+  const f = ring[0], l = ring[ring.length - 1];
+  if (f[0] !== l[0] || f[1] !== l[1]) ring.push([f[0], f[1]]);
+  const obj = { type: 'Polygon', coordinates: [ring] };
+  // Pretty-print, indent inner lines by 2 spaces to align inside SET
+  const pretty = JSON.stringify(obj, null, 2)
+    .split('\n').map((line, i) => i === 0 ? line : '  ' + line).join('\n');
+  return `UPDATE ${tbl}\nSET ${geom} = '${pretty}'::jsonb\nWHERE ${nCol} ILIKE '%${nameEsc}%';`;
+}
+
+function rebuildSQL() {
+  if (!allPolygons.length) return;
+
+  const tbl  = document.getElementById('cfg-table').value.trim() || 'parques';
+  const geom = document.getElementById('cfg-geom').value.trim()  || 'geometry';
+  const nCol = document.getElementById('cfg-name').value.trim()  || 'name';
+
+  const wrap = document.getElementById('sql-wrap');
+  wrap.innerHTML = '';
+
+  let matched = 0, unmatched = 0;
+
+  allPolygons.forEach((poly, i) => {
+    const geoJson = polyToGeoJSON(poly.points);
+    const nameEsc = poly.name.replace(/'/g, "''");
+    const hasName = poly.name.trim().length > 0;
+
+    if (hasName) matched++; else unmatched++;
+
+    // Display-only preview — NEVER used in actual SQL output
+    const geoPreview = geoJson.length > 60
+      ? escHtml(geoJson.slice(0, 60)) + '<span style="color:var(--muted)">…[' + poly.points.length + ' pts]</span>'
+      : escHtml(geoJson);
+
+    const sqlHtml =
+      `<span class="kw">UPDATE</span> <span class="tbl">${escHtml(tbl)}</span>\n` +
+      `<span class="kw">SET</span> <span class="fn">${escHtml(geom)}</span> = <span class="str">'${geoPreview}'</span><span class="kw">::jsonb</span>\n` +
+      `<span class="kw">WHERE</span> <span class="fn">${escHtml(nCol)}</span> <span class="kw">ILIKE</span> <span class="str">'%${escHtml(nameEsc)}%'</span>;`;
+
+    const block = document.createElement('div');
+    block.className = 'sql-block' + (hasName ? '' : ' no-match');
+    block.innerHTML = `
+      <div class="sql-num">${i + 1}</div>
+      <div class="sql-code">${sqlHtml}</div>
+      <div class="sql-copy-row">
+        <span class="match-pill ${hasName ? 'match-ok' : 'match-no'}">${hasName ? '✓' : '∅'}</span>
+        <span class="copy-btn" onclick="copySQLBlock(${i}, this)">⎘</span>
+      </div>
+    `;
+    wrap.appendChild(block);
+  });
+
+  const footer = document.getElementById('sql-footer');
+  footer.innerHTML = `
+    <span class="stat ok"><strong>${matched}</strong> sentencias listas</span>
+    ${unmatched ? `<span class="stat warn"><strong>${unmatched}</strong> sin nombre (∅)</span>` : ''}
+    <span class="stat" style="margin-left:auto;color:var(--muted)">
+      geometry como <strong>GeoJSON</strong> — compatible con Supabase / PostGIS
+    </span>
+  `;
+}
+
+function copySQLBlock(idx, btn) {
+  const tbl  = document.getElementById('cfg-table').value.trim() || 'parques';
+  const geom = document.getElementById('cfg-geom').value.trim()  || 'geometry';
+  const nCol = document.getElementById('cfg-name').value.trim()  || 'name';
+  const sql  = buildStmt(tbl, geom, nCol, allPolygons[idx]);
+  navigator.clipboard.writeText(sql).then(() => {
+    const orig = btn.textContent;
+    btn.textContent = '✓';
+    btn.style.color = '#00e5a0';
+    setTimeout(() => { btn.textContent = orig; btn.style.color = ''; }, 1500);
+  });
+}
+
+function downloadSQL() {
+  const tbl  = document.getElementById('cfg-table').value.trim() || 'parques';
+  const geom = document.getElementById('cfg-geom').value.trim()  || 'geometry';
+  const nCol = document.getElementById('cfg-name').value.trim()  || 'name';
+
+  const header = [
+    `-- Generado por KML Viewer`,
+    `-- Tabla: ${tbl} | Columna geometría: ${geom}`,
+    `-- Total polígonos: ${allPolygons.length}`,
+    `-- geometry en formato GeoJSON — compatible con Supabase / PostGIS`,
+    `-- WHERE usa ILIKE con nombre del KML como substring (insensible a mayúsculas)`,
+    ``,
+    `BEGIN;`,
+    ``
+  ].join('\n');
+
+  const stmts = allPolygons
+    .map(poly => `-- ${poly.name}\n` + buildStmt(tbl, geom, nCol, poly))
+    .join('\n\n');
+
+  download('update_geometrias.sql', 'text/plain', header + stmts + `\n\nCOMMIT;\n`);
+}
+
+
+function escHtml(t) {
+  return t.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+loadDefaultKmlFromSameFolder();
+</script>
+</body>
+</html>
